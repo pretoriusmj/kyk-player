@@ -190,7 +190,7 @@ nav button.on { color: var(--accent); }
 (function () {
   'use strict';
   var NTFY = 'https://ntfy.sh';
-  var VERSION = 4;   // bump with every change: open copies notice and reload themselves
+  var VERSION = 5;   // bump with every change: open copies notice and reload themselves
   var $ = function (s) { return document.querySelector(s); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var ls = { get: function (k, d) { try { var v = localStorage.getItem('kyk.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -215,10 +215,19 @@ nav button.on { color: var(--accent); }
   var tvTopic = NTFY + '/kyk-' + secret + '-tv', phTopic = NTFY + '/kyk-' + secret + '-ph';
   var connected = false, helloTimer = 0, np = null, profile = '', kids = false, lastQ = '', results = [], pinNeeded = false;
 
-  function send(msg) {
-    if (navigator.vibrate) navigator.vibrate(10);
+  // ntfy.sh's free tier limits how fast one home connection (phone, TV and anything else on it) may
+  // send. When it says "slow down" (429) we wait and retry once instead of giving up.
+  var busyUntil = 0;
+  function send(msg, retried) {
+    if (navigator.vibrate && msg.t !== 'hello') navigator.vibrate(10);
+    if (Date.now() < busyUntil) { if (msg.t === 'hello' || msg.t === 'search' || msg.t === 'play' || msg.t === 'profile') setTimeout(function () { send(msg, true); }, busyUntil - Date.now() + 200); return Promise.resolve(); }
     return fetch(tvTopic + '?cache=no&firebase=no', { method: 'POST', body: JSON.stringify(msg) }).then(function (r) {
-      if (r.status === 429) toast('Too many presses for a moment — try again in a few seconds');
+      if (r.status === 429) {
+        busyUntil = Date.now() + 12000;
+        status(false, 'Busy — retrying…');
+        if (!retried) setTimeout(function () { send(msg, true); }, 12500);
+        else toast('The message service is busy — try again in a minute');
+      }
     }).catch(function () { status(false, 'Offline'); });
   }
   function status(ok, text) { connected = ok; $('#pill').className = 'pill ' + (ok ? 'ok' : 'bad'); $('#pillTxt').textContent = text; }
@@ -226,13 +235,16 @@ nav button.on { color: var(--accent); }
   function toast(t) { var el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(function () { el.hidden = true; }, 2600); }
 
   // ---- messages from the TV ----
-  function hello() {
+  var lastHello = 0;
+  function hello(force) {
+    if (!force && Date.now() - lastHello < 10000) return;   // at most every 10 s, not on every reconnect
+    lastHello = Date.now();
     send({ t: 'hello' });
     clearTimeout(helloTimer);
-    helloTimer = setTimeout(function () { if (!connected) status(false, 'TV not answering — open Kyk'); }, 5000);
+    helloTimer = setTimeout(function () { if (!connected && Date.now() >= busyUntil) status(false, 'TV not answering — is Kyk open?'); }, 6000);
   }
   var es = new EventSource(phTopic + '/sse');
-  es.onopen = hello;
+  es.onopen = function () { hello(); };
   es.onmessage = function (ev) {
     var env, msg;
     try { env = JSON.parse(ev.data); if (env.event !== 'message') return; msg = JSON.parse(env.message); } catch (e) { return; }
@@ -264,7 +276,7 @@ nav button.on { color: var(--accent); }
   // ---- switching the TV's profile ----
   var wantProf = null;
   $('#pill').addEventListener('click', function () {
-    if (!connected) { hello(); return; }
+    if (!connected) { hello(true); return; }
     wantProf = null; $('#pinRow').hidden = true; $('#pinIn').value = '';
     Array.prototype.forEach.call(document.querySelectorAll('.prof'), function (b) { b.classList.toggle('on', b.getAttribute('data-prof') === (kids ? 'kids' : 'adult')); });
     $('#sheet').hidden = false;
