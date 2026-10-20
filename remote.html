@@ -82,6 +82,17 @@ form button { height: 40px; padding: 0 16px; border-radius: 12px; background: va
 .sk svg { width: 20px; height: 20px; margin-right: 7px; color: var(--muted); }
 .sk.y svg { color: #f7d25a; }
 
+/* volume */
+.vol { display: flex; align-items: center; margin: 16px 0 0; padding: 8px; border-radius: 18px; background: var(--panel); }
+.vb { width: 52px; height: 52px; border-radius: 14px; background: var(--panel2); display: flex; align-items: center; justify-content: center; flex: none; }
+.vb + .vb, .vlev + .vb { margin-left: 8px; }
+.vb:active { transform: scale(.94); }
+.vb.on { background: #ff5a64; color: #0b0c0f; }
+.vlev { position: relative; flex: 1; height: 52px; margin-left: 8px; border-radius: 14px; background: var(--panel2); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.vlev i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(255,122,69,.35); transition: width .2s; }
+body.kids .vlev i { background: rgba(63,214,198,.35); }
+.vlev span { position: relative; font-weight: 700; font-size: 15px; }
+
 /* apps */
 .apps { display: flex; flex-wrap: wrap; margin: 0 -6px; }
 .app { width: calc(50% - 12px); margin: 6px; height: 84px; padding: 0 14px; border-radius: 18px; background: var(--panel); display: flex; align-items: center; font-weight: 700; font-size: 15px; text-align: left; }
@@ -120,6 +131,12 @@ nav button.on { color: var(--accent); }
       <button class="tb big" data-k="playpause"><svg class="i" viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor"/></svg></button>
       <button class="tb" data-k="ff"><svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4h-4"/></svg>+30</button>
     </div>
+    <div class="vol">
+      <button class="vb" data-vol="mute" id="vMute"><svg class="i" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5m0-5-5 5"/></svg></button>
+      <button class="vb" data-vol="down"><svg class="i" viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <div class="vlev"><i id="vBar"></i><span id="vTxt">Volume</span></div>
+      <button class="vb" data-vol="up"><svg class="i" viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
+    </div>
     <div class="pad">
       <button class="dk u" data-k="up"><svg class="i" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg></button>
       <button class="dk l" data-k="left"><svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg></button>
@@ -156,10 +173,19 @@ nav button.on { color: var(--accent); }
              set: function (k, v) { try { localStorage.setItem('kyk.' + k, JSON.stringify(v)); } catch (e) {} } };
 
   // ---- pairing: the secret arrives in the QR link's #k=…, then lives only in this phone's storage ----
+  // The secret stays in the link itself (#k=…): a home-screen shortcut saves the link, and on iPhone
+  // home-screen apps don't share storage with Safari, so the link is what keeps you paired.
   var m = /[#&]k=([A-Za-z0-9]{16,40})/.exec(location.hash);
-  if (m) { ls.set('secret', m[1]); history.replaceState(null, '', location.pathname); }
-  var secret = ls.get('secret', null);
+  if (m) ls.set('secret', m[1]);
+  var secret = m ? m[1] : ls.get('secret', null);
   if (!secret) { $('#unpaired').hidden = false; $('#pill').classList.add('bad'); $('#pillTxt').textContent = 'Not paired'; return; }
+  if (!m) history.replaceState(null, '', location.pathname + '#k=' + secret);
+  // A manifest whose start_url carries the secret, so Android's "Add to Home screen"/install keeps it too.
+  var base = location.href.replace(/[#?].*$/, '').replace(/[^\/]*$/, '');
+  var man = { name: 'Kyk Remote', short_name: 'Kyk', start_url: base + 'remote.html#k=' + secret, scope: base, display: 'standalone', orientation: 'portrait',
+    background_color: '#08090c', theme_color: '#08090c', icons: [{ src: base + 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: base + 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] };
+  var ml = document.querySelector('link[rel=manifest]');
+  ml.setAttribute('href', 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man)));
   $('#nav').hidden = false;
 
   var tvTopic = NTFY + '/kyk-' + secret + '-tv', phTopic = NTFY + '/kyk-' + secret + '-ph';
@@ -192,10 +218,12 @@ nav button.on { color: var(--accent); }
       status(true, profile ? 'TV · ' + profile : 'TV · pick a profile');
       $('#sQ').placeholder = kids ? 'Search the kids’ channels' : 'Search YouTube on the TV';
       setNp(msg.np);
+      if (msg.vol) setVol(msg.vol);
     } else if (msg.t === 'results') { showResults(msg); }
     else if (msg.t === 'np') { setNp(msg.np); }
     else if (msg.t === 'apps') { showApps(msg.items || []); }
     else if (msg.t === 'say') { toast(msg.text); }
+    else if (msg.t === 'vol') { setVol(msg); }
   };
   document.addEventListener('visibilitychange', function () { if (!document.hidden) hello(); });
 
@@ -266,6 +294,15 @@ nav button.on { color: var(--accent); }
     var paint = function () { var p = n.pos + (n.state === 1 ? (Date.now() - n.at) / 1000 : 0); $('#npBar').style.width = (n.dur ? Math.min(100, p / n.dur * 100) : 0) + '%'; };
     paint(); npTimer = setInterval(paint, 1000);
   }
+
+  // ---- volume (the TV's own) ----
+  function setVol(v) {
+    if (v.level == null) { $('#vTxt').textContent = 'Volume'; return; }
+    $('#vBar').style.width = Math.min(100, v.level) + '%';
+    $('#vTxt').textContent = v.mute ? 'Muted' : 'Volume ' + v.level;
+    $('#vMute').classList.toggle('on', !!v.mute);
+  }
+  document.addEventListener('click', function (e) { var b = e.target.closest('[data-vol]'); if (b) send({ t: 'vol', d: b.getAttribute('data-vol') }); });
 
   // ---- apps ----
   var COLORS = ['#ff7a45', '#3fd6c6', '#7cc4ff', '#b49cff', '#a8d672', '#ff6f91', '#f7d25a'];
