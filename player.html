@@ -14,9 +14,11 @@
   var f = document.getElementById('f');
   f.src = host + '/embed/' + p.v + '?autoplay=1&controls=0&rel=0&iv_load_policy=3&modestbranding=1&playsinline=1&fs=0&disablekb=1&cc_load_policy=0&enablejsapi=1' +
     (p.start ? '&start=' + (+p.start | 0) : '') + '&origin=' + encodeURIComponent(location.origin);
+  // From YouTube → up to Kyk; anything else (only Kyk can reach this window) → down to YouTube.
+  // (Comparing e.source with window.parent is unreliable in the TV's Chromium 56.)
   window.addEventListener('message', function (e) {
     if (e.source === f.contentWindow) { if (window.parent !== window) window.parent.postMessage(e.data, '*'); }
-    else if (e.source === window.parent && f.contentWindow) f.contentWindow.postMessage(e.data, '*');
+    else if (f.contentWindow) f.contentWindow.postMessage(e.data, '*');
   });
 })();
 </script></body></html>
