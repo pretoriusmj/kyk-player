@@ -178,6 +178,7 @@ nav button.on { color: var(--accent); }
     <div class="apps" id="apps"><div class="spin"></div></div>
     <p class="note">Opens the app from Kyk. Controls inside other apps need the TV’s own remote for now.</p>
     <p class="ver" id="ver"></p>
+    <p class="ver" id="diag">Checking the message service…</p>
   </section>
 </main>
 <nav id="nav" hidden>
@@ -190,7 +191,7 @@ nav button.on { color: var(--accent); }
 (function () {
   'use strict';
   var NTFY = 'https://ntfy.sh';
-  var VERSION = 5;   // bump with every change: open copies notice and reload themselves
+  var VERSION = 6;   // bump with every change: open copies notice and reload themselves
   var $ = function (s) { return document.querySelector(s); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var ls = { get: function (k, d) { try { var v = localStorage.getItem('kyk.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -222,13 +223,25 @@ nav button.on { color: var(--accent); }
     if (navigator.vibrate && msg.t !== 'hello') navigator.vibrate(10);
     if (Date.now() < busyUntil) { if (msg.t === 'hello' || msg.t === 'search' || msg.t === 'play' || msg.t === 'profile') setTimeout(function () { send(msg, true); }, busyUntil - Date.now() + 200); return Promise.resolve(); }
     return fetch(tvTopic + '?cache=no&firebase=no', { method: 'POST', body: JSON.stringify(msg) }).then(function (r) {
+      if (!r.ok) r.clone().text().then(function (t) { lastErr = r.status + ' ' + t.slice(0, 160); diag(); });
+      else if (lastErr) { lastErr = ''; }
       if (r.status === 429) {
         busyUntil = Date.now() + 12000;
         status(false, 'Busy — retrying…');
         if (!retried) setTimeout(function () { send(msg, true); }, 12500);
         else toast('The message service is busy — try again in a minute');
       }
-    }).catch(function () { status(false, 'Offline'); });
+    }).catch(function (e) { lastErr = 'network: ' + e.message; diag(); status(false, 'Offline'); });
+  }
+
+  // ---- diagnostics (Apps tab): what ntfy says about this phone's connection ----
+  var lastErr = '';
+  function diag() {
+    fetch(NTFY + '/v1/account', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var st = j.stats || {}, lim = j.limits || {};
+      $('#diag').textContent = 'Message service: ' + st.messages_remaining + ' of ' + lim.messages + ' messages left today for this connection (' + lim.basis + ')' +
+        (lastErr ? ' · last error: ' + lastErr : ' · no errors');
+    }).catch(function (e) { $('#diag').textContent = 'Message service unreachable: ' + e.message + (lastErr ? ' · last error: ' + lastErr : ''); });
   }
   function status(ok, text) { connected = ok; $('#pill').className = 'pill ' + (ok ? 'ok' : 'bad'); $('#pillTxt').textContent = text; }
   var toastTimer = 0;
@@ -296,7 +309,7 @@ nav button.on { color: var(--accent); }
     ['search', 'remote', 'apps'].forEach(function (t) { $('#tab-' + t).hidden = t !== name; });
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === name); });
     ls.set('tab', name);
-    if (name === 'apps') send({ t: 'apps' });
+    if (name === 'apps') { send({ t: 'apps' }); diag(); }
   }
   $('#nav').addEventListener('click', function (e) { var b = e.target.closest('[data-tab]'); if (b) tab(b.getAttribute('data-tab')); });
   tab(ls.get('tab', 'search'));
