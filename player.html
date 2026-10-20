@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Kyk player relay. YouTube refuses embeds from an installed TV app (no web address → error 153),
+     so Kyk loads this page from a web server on the LAN; it embeds YouTube and passes messages
+     both ways, so YouTube sees an ordinary web page as its embedder. -->
+<html><head><meta charset="utf-8"><title>Kyk player</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}</style>
+</head><body><iframe id="f" allow="autoplay; encrypted-media"></iframe>
+<script>
+(function () {
+  var p = {}, q = location.search.replace(/^\?/, '').split('&');
+  for (var i = 0; i < q.length; i++) { var kv = q[i].split('='); if (kv[0]) p[kv[0]] = decodeURIComponent(kv[1] || ''); }
+  if (!/^[\w-]{6,20}$/.test(p.v || '')) { document.body.innerHTML = '<p style="color:#fff;font:20px sans-serif">no video</p>'; return; }
+  var host = p.host === 'nocookie' ? 'https://www.youtube-nocookie.com' : 'https://www.youtube.com';
+  var f = document.getElementById('f');
+  f.src = host + '/embed/' + p.v + '?autoplay=1&controls=0&rel=0&iv_load_policy=3&modestbranding=1&playsinline=1&fs=0&disablekb=1&cc_load_policy=0&enablejsapi=1' +
+    (p.start ? '&start=' + (+p.start | 0) : '') + '&origin=' + encodeURIComponent(location.origin);
+  window.addEventListener('message', function (e) {
+    if (e.source === f.contentWindow) { if (window.parent !== window) window.parent.postMessage(e.data, '*'); }
+    else if (e.source === window.parent && f.contentWindow) f.contentWindow.postMessage(e.data, '*');
+  });
+})();
+</script></body></html>
