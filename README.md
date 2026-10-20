@@ -9,3 +9,10 @@ API's `postMessage` traffic between Kyk and the player.
 
 No keys, accounts or data live here. The page only accepts a video id (`?v=`) and an optional
 start time (`&start=`).
+
+## remote.html — phone remote
+
+`remote.html` is Kyk's phone remote (Android and iPhone; add it to the home screen). The TV's QR
+code opens it with a pairing secret in the URL fragment (`#k=…`). The page keeps the secret in the
+phone's storage and removes it from the address bar. Phone and TV exchange small JSON messages
+through two private ntfy.sh topics derived from that secret, published with `cache=no`.
