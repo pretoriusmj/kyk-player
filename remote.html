@@ -190,8 +190,9 @@ nav button.on { color: var(--accent); }
 <script>
 (function () {
   'use strict';
-  var NTFY = 'https://ntfy.sh';
-  var VERSION = 6;   // bump with every change: open copies notice and reload themselves
+  // Server and token arrive with the pairing link (#k=…&s=…&t=…); ntfy.sh is the fallback.
+  var NTFY = 'https://ntfy.sh', TOKEN = '';
+  var VERSION = 7;   // bump with every change: open copies notice and reload themselves
   var $ = function (s) { return document.querySelector(s); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var ls = { get: function (k, d) { try { var v = localStorage.getItem('kyk.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -201,13 +202,18 @@ nav button.on { color: var(--accent); }
   // The secret stays in the link itself (#k=…): a home-screen shortcut saves the link, and on iPhone
   // home-screen apps don't share storage with Safari, so the link is what keeps you paired.
   var m = /[#&]k=([A-Za-z0-9]{16,40})/.exec(location.hash);
-  if (m) ls.set('secret', m[1]);
+  var ms = /[#&]s=([^&]+)/.exec(location.hash), mt = /[#&]t=(tk_[A-Za-z0-9]+)/.exec(location.hash);
+  if (m) { ls.set('secret', m[1]); ls.set('server', ms ? decodeURIComponent(ms[1]) : ''); ls.set('token', mt ? mt[1] : ''); }
   var secret = m ? m[1] : ls.get('secret', null);
+  if (/^https:\/\/[\w.-]+$/.test(ls.get('server', ''))) NTFY = ls.get('server', '');
+  TOKEN = ls.get('token', '');
+  var AUTH = TOKEN ? '&auth=' + btoa('Bearer ' + TOKEN).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : '';
+  var LINK = '#k=' + secret + (NTFY !== 'https://ntfy.sh' ? '&s=' + encodeURIComponent(NTFY) : '') + (TOKEN ? '&t=' + TOKEN : '');
   if (!secret) { $('#unpaired').hidden = false; $('#pill').classList.add('bad'); $('#pillTxt').textContent = 'Not paired'; return; }
-  if (!m) history.replaceState(null, '', location.pathname + '#k=' + secret);
+  if (!m || !ms) history.replaceState(null, '', location.pathname + LINK);
   // A manifest whose start_url carries the secret, so Android's "Add to Home screen"/install keeps it too.
   var base = location.href.replace(/[#?].*$/, '').replace(/[^\/]*$/, '');
-  var man = { name: 'Kyk Remote', short_name: 'Kyk', start_url: base + 'remote.html#k=' + secret, scope: base, display: 'standalone', orientation: 'portrait',
+  var man = { name: 'Kyk Remote', short_name: 'Kyk', start_url: base + 'remote.html' + LINK, scope: base, display: 'standalone', orientation: 'portrait',
     background_color: '#08090c', theme_color: '#08090c', icons: [{ src: base + 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: base + 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] };
   var ml = document.querySelector('link[rel=manifest]');
   ml.setAttribute('href', 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man)));
@@ -222,7 +228,7 @@ nav button.on { color: var(--accent); }
   function send(msg, retried) {
     if (navigator.vibrate && msg.t !== 'hello') navigator.vibrate(10);
     if (Date.now() < busyUntil) { if (msg.t === 'hello' || msg.t === 'search' || msg.t === 'play' || msg.t === 'profile') setTimeout(function () { send(msg, true); }, busyUntil - Date.now() + 200); return Promise.resolve(); }
-    return fetch(tvTopic + '?cache=no&firebase=no', { method: 'POST', body: JSON.stringify(msg) }).then(function (r) {
+    return fetch(tvTopic + '?cache=no&firebase=no' + AUTH, { method: 'POST', body: JSON.stringify(msg) }).then(function (r) {
       if (!r.ok) r.clone().text().then(function (t) { lastErr = r.status + ' ' + t.slice(0, 160); diag(); });
       else if (lastErr) { lastErr = ''; }
       if (r.status === 429) {
@@ -237,7 +243,7 @@ nav button.on { color: var(--accent); }
   // ---- diagnostics (Apps tab): what ntfy says about this phone's connection ----
   var lastErr = '';
   function diag() {
-    fetch(NTFY + '/v1/account', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch(NTFY + '/v1/account' + (AUTH ? '?' + AUTH.slice(1) : ''), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var st = j.stats || {}, lim = j.limits || {};
       $('#diag').textContent = 'Message service: ' + st.messages_remaining + ' of ' + lim.messages + ' messages left today for this connection (' + lim.basis + ')' +
         (lastErr ? ' · last error: ' + lastErr : ' · no errors');
@@ -256,7 +262,7 @@ nav button.on { color: var(--accent); }
     clearTimeout(helloTimer);
     helloTimer = setTimeout(function () { if (!connected && Date.now() >= busyUntil) status(false, 'TV not answering — is Kyk open?'); }, 6000);
   }
-  var es = new EventSource(phTopic + '/sse');
+  var es = new EventSource(phTopic + '/sse?x=1' + AUTH);
   es.onopen = function () { hello(); };
   es.onmessage = function (ev) {
     var env, msg;
